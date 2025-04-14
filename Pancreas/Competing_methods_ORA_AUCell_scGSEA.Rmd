@@ -1170,8 +1170,8 @@ ctrl_inactive_pathways = c("Salmonella infection",
     "Thyroid cancer",
     "Shigellosis",
     "Apoptosis",
-    "Cytokine-cytokine receptor interaction",
-    "FoxO signaling pathway")
+    "Cytokine-cytokine receptor interaction")
+
 
 
 
