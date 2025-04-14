@@ -1,0 +1,253 @@
+Combined contour plot for pancreas and liver
+
+
+```{r}
+# Load required packages
+library(dplyr)
+library(ggplot2)
+
+# =============================================================================
+# PANCREAS DATA PROCESSING
+# =============================================================================
+
+# Define the file paths for pancreas (Ctrl and T1D groups)
+files_pancreas <- c("/work/of21_work/pancreas_cpact_pathways.csv",
+                    "/work/of21_work/pancreas_ORA_pathways_ctrl.csv",
+                    "/work/of21_work/pancreas_AUCell_pathways_ctrl.csv",
+                    "/work/of21_work/pancreas_scGSEA_pathways_ctrl.csv",
+                    "/work/of21_work/pancreas_ORA_pathways_t1d.csv",
+                    "/work/of21_work/pancreas_AUCell_pathways_t1d.csv",
+                    "/work/of21_work/pancreas_scGSEA_pathways_t1d.csv")
+
+# Read each CSV file into a list and combine by rows
+df_list_pancreas <- lapply(files_pancreas, read.csv, stringsAsFactors = FALSE)
+combined_df_pancreas <- do.call(rbind, df_list_pancreas)
+
+# Define the desired pathways (lists for Ctrl and T1D)
+ctrl_active_pathways <- c("Autophagy", 
+    "Protein digestion and absorption",
+    "PI3K-Akt signaling pathway",
+    "Insulin signaling pathway",
+    "Oxidative phosphorylation",
+    "Protein processing in endoplasmic reticulum",
+    "mTOR signaling pathway",
+    "HIF-1 signaling pathway",
+    "AMPK signaling pathway",
+    "PPAR signaling pathway",
+    "cGMP-PKG signaling pathway")
+
+ctrl_inactive_pathways <- c("Salmonella infection",
+    "Bacterial invasion of epithelial cells",
+    "Pathogenic Escherichia coli infection",
+    "Thyroid cancer",
+    "Shigellosis",
+    "Apoptosis",
+    "Cytokine-cytokine receptor interaction")
+
+
+desired_pathways <- c(ctrl_active_pathways, ctrl_inactive_pathways)
+
+# Filter the combined data for only the desired pathways
+filtered_df_pancreas <- combined_df_pancreas[combined_df_pancreas$Pathway.Name %in% desired_pathways, ]
+
+# Add a ground truth column:
+# For Ctrl: +1 if pathway is in ctrl_active_pathways, -1 if in ctrl_inactive_pathways.
+# For T1D: +1 if pathway is in t1d_active_pathways, -1 if in t1d_inactive_pathways.
+final_combined_df_pancreas <- filtered_df_pancreas %>%
+  mutate(ground_truth = case_when(
+    Group == "Ctrl" & Pathway.Name %in% ctrl_active_pathways ~ 1,
+    Group == "Ctrl" & Pathway.Name %in% ctrl_inactive_pathways ~ -1,
+    Group == "T1D" & Pathway.Name %in% t1d_active_pathways ~ 1,
+    Group == "T1D" & Pathway.Name %in% t1d_inactive_pathways ~ -1,
+    TRUE ~ NA_real_
+  )) %>%
+  filter(!is.na(ground_truth))
+
+# Compute precision, recall, and F1 for each method in pancreas data
+method_summary_pancreas <- final_combined_df_pancreas %>%
+  group_by(Type) %>%
+  summarise(
+    TP = sum(Value == 1 & ground_truth == 1),
+    FP = sum(Value == 1 & ground_truth == -1),
+    FN = sum(Value == -1 & ground_truth == 1)
+  ) %>%
+  mutate(
+    precision = ifelse((TP + FP) == 0, 0, TP / (TP + FP)),
+    recall    = ifelse((TP + FN) == 0, 0, TP / (TP + FN)),
+    F1        = ifelse((precision + recall) == 0, 0, 2 * precision * recall / (precision + recall))
+  )
+
+# =============================================================================
+# LIVER DATA PROCESSING
+# =============================================================================
+
+# Define the file paths for liver data
+files_liver <- c("/work/of21_work/hepatocyte_cpact_pathways.csv",
+                 "/work/of21_work/hepatocyte_ORA_pathways.csv",
+                 "/work/of21_work/hepatocyte_AUCell_pathways.csv",
+                 "/work/of21_work/hepatocyte_scGSEA_pathways.csv")
+
+# Read each CSV file into a list and combine
+df_list_liver <- lapply(files_liver, read.csv, stringsAsFactors = FALSE)
+final_combined_df_liver <- do.call(rbind, df_list_liver)
+
+# Clean pathway names: change any starting with "Drug metabolism" to a unified name
+final_combined_df_liver$Pathway.Name <- ifelse(grepl("^Drug metabolism", final_combined_df_liver$Pathway.Name),
+                                               "Drug metabolism - cytochrome P450",
+                                               final_combined_df_liver$Pathway.Name)
+
+# Define pathway lists for liver data
+metabolic_pathways <- c("Biosynthesis of unsaturated fatty acids", "Carbon metabolism", 
+  "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+  "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism - cytochrome P450")
+
+cancer_pathways <- c("Thyroid cancer", "Shigellosis", "Colorectal cancer",
+    "Pancreatic cancer", "Hepatocellular carcinoma", "Gastric cancer",
+    "Glioma", "Acute myeloid leukemia", "Chronic myeloid leukemia",
+    "Basal cell carcinoma", "Melanoma", "Renal cell carcinoma",
+    "Bladder cancer", "Prostate cancer", "Endometrial cancer",
+    "Breast cancer", "Small cell lung cancer", "Non-small cell lung cancer")
+
+# Add ground truth for liver: +1 for metabolic pathways and -1 for cancer pathways.
+final_combined_df_liver <- final_combined_df_liver %>%
+  mutate(ground_truth = case_when(
+    Pathway.Name %in% metabolic_pathways ~ 1,
+    Pathway.Name %in% cancer_pathways ~ -1,
+    TRUE ~ NA_real_
+  )) %>%
+  filter(!is.na(ground_truth))
+
+# Compute precision, recall, and F1 for each method in liver data
+method_summary_liver <- final_combined_df_liver %>%
+  group_by(Type) %>%
+  summarise(
+    TP = sum(Value == 1 & ground_truth == 1),
+    FP = sum(Value == 1 & ground_truth == -1),
+    FN = sum(Value == -1 & ground_truth == 1)
+  ) %>%
+  mutate(
+    precision = ifelse((TP + FP) == 0, 0, TP / (TP + FP)),
+    recall    = ifelse((TP + FN) == 0, 0, TP / (TP + FN)),
+    F1        = ifelse((precision + recall) == 0, 0, 2 * precision * recall / (precision + recall))
+  )
+
+# =============================================================================
+# COMBINE SUMMARIES AND PREPARE FOR PLOTTING
+# =============================================================================
+
+# Add a Tissue column and a combined label for the legend.
+method_summary_liver <- method_summary_liver %>%
+  mutate(Tissue = "Liver",
+         MethodLabel = paste0(Type, " (Liver)"))
+method_summary_pancreas <- method_summary_pancreas %>%
+  mutate(Tissue = "Pancreas",
+         MethodLabel = paste0(Type, " (Pancreas)"))
+
+# Combine the two summaries into one data frame
+combined_summary <- bind_rows(method_summary_liver, method_summary_pancreas)
+
+# Reorder factor levels so that each method’s Liver and Pancreas entries are consecutive:
+combined_summary$MethodLabel <- factor(combined_summary$MethodLabel, 
+  levels = c("CPACT (Liver)", "CPACT (Pancreas)",
+             "ORA (Liver)", "ORA (Pancreas)",
+             "AUCell (Liver)", "AUCell (Pancreas)",
+             "scGSEA (Liver)", "scGSEA (Pancreas)"))
+
+# =============================================================================
+# CREATE PRECISION-RECALL GRID FOR THE CONTOUR PLOT
+# =============================================================================
+
+precision_vals <- seq(0.01, 1, length.out = 100)
+recall_vals    <- seq(0.01, 1, length.out = 100)
+grid <- expand.grid(precision = precision_vals, recall = recall_vals)
+grid$F1 <- with(grid, 2 * precision * recall / (precision + recall))
+
+# Define contour levels and annotation labels for selected F1 values
+F1_levels <- seq(0.1, 0.9, by = 0.1)
+annot_levels <- c(0.1, 0.5, 0.9)
+offset <- -0.035
+annot_df <- data.frame(
+  x = annot_levels + offset,
+  y = annot_levels + offset,
+  label = paste0("F1=", annot_levels)
+)
+
+# =============================================================================
+# CREATE THE COMBINED CONTOUR PLOT WITH A TWO-COLUMN LEGEND ARRANGED BY ROW
+# =============================================================================
+
+ggplot() +
+  # Draw thicker F1 contour lines
+  geom_contour(data = grid, aes(x = precision, y = recall, z = F1),
+               breaks = F1_levels, color = "grey50", size = 1.2) +
+  # Annotate selected F1 levels
+  geom_text(data = annot_df, aes(x = x, y = y, label = label),
+            color = "black", size = 11, fontface = "bold", vjust = 0.65) +
+  # Overlay the method points with color and shape determined by MethodLabel
+  geom_point(data = combined_summary,
+             aes(x = precision, y = recall, color = MethodLabel, shape = MethodLabel),
+             size = 10) +
+  labs(x = "Precision",
+       y = "Recall",
+       title = "") +
+  # Use the same legend title so that color and shape legends merge
+  scale_color_manual(name = NULL, values = c(
+    "CPACT (Liver)"    = "#FF1F58",
+    "CPACT (Pancreas)" = "#FF1F58",
+    "ORA (Liver)"      = "#00CD6C",
+    "ORA (Pancreas)"   = "#00CD6C",
+    "AUCell (Liver)"   = "#009ADE",
+    "AUCell (Pancreas)"= "#009ADE",
+    "scGSEA (Liver)"   = "#AF58BA",
+    "scGSEA (Pancreas)"= "#AF58BA"
+  )) +
+  scale_shape_manual(name = NULL, values = c(
+    "CPACT (Liver)"    = 17,  # triangle
+    "CPACT (Pancreas)" = 16,  # circle
+    "ORA (Liver)"      = 17,
+    "ORA (Pancreas)"   = 16,
+    "AUCell (Liver)"   = 17,
+    "AUCell (Pancreas)"= 16,
+    "scGSEA (Liver)"   = 17,
+    "scGSEA (Pancreas)"= 16
+  )) +
+  # Set legend to display in 2 columns arranged by row (so that each method appears in one row)
+  guides(color = guide_legend(ncol = 2, byrow = TRUE),
+         shape = guide_legend(ncol = 2, byrow = TRUE)) +
+  scale_x_continuous(limits = c(0, 1.01), breaks = seq(0, 1, 0.2),
+                     labels = function(x) ifelse(x == 0, "", x),
+                     expand = c(0, 0)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2),
+                     labels = function(x) sub("\\.0$", "", x),
+                     expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  theme_minimal() +
+  theme(text = element_text(size = 12),
+        axis.text.x = element_text(face = "bold", size = 23),
+        axis.text.y = element_text(face = "bold", size = 23),
+        axis.title.x = element_text(size = 42),
+        axis.title.y = element_text(size = 42),
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 40),
+        # Position the legend inside the plot; adjust coordinates as needed.
+        legend.position = c(0.7, 0.31),
+        legend.key.size = unit(1.8, "lines"),              # Increase legend key size
+
+        # Optional: add a semi-transparent white background for clarity.
+        legend.background = element_rect(fill = alpha("white", 0.6), color = NA))
+
+# Save the plot
+#ggsave("/work/of21_work/combined_precision_recall_plot.jpeg", width = 12, height = 10, dpi = 600)
+
+
+```
+
