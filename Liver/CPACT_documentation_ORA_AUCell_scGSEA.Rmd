@@ -1,0 +1,670 @@
+---
+title: "Liver Ora AUCell scGSEA combined"
+output: html_document
+date: "2025-02-05"
+---
+
+ORA Pathway Analysis
+
+```{r}
+# Load necessary libraries
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(sctransform)
+library(ggplot2)
+library(biomaRt)
+library(clusterProfiler)
+library(org.Hs.eg.db) 
+library(clusterProfiler)
+
+
+set.seed(1234)
+
+# ----------------------------
+# Step 1: Load and Prepare Data
+# ----------------------------
+
+# Load the Seurat object
+liver_data <- readRDS("/work/of21_work/human liver hepatocyte cells.rds")
+
+# Inspect metadata
+head(liver_data@meta.data)
+metadata <- liver_data@meta.data
+
+# Filter for hepatocyte cells
+hepatocyte_cells <- metadata[metadata$cell_type == "hepatocyte", ]
+
+# Extract the count matrix for hepatocyte cells
+count_matrix <- liver_data@assays[["RNA"]]@counts
+liver_count_matrix <- count_matrix[, rownames(hepatocyte_cells)]
+
+# Create a new Seurat object
+so <- CreateSeuratObject(counts = liver_count_matrix)
+
+# Run SCTransform
+so <- SCTransform(object = so, vst.flavor = "v2", verbose = FALSE)
+
+# Get the filtered count matrix
+liver_count_matrix <- so@assays[["SCT"]]@counts
+
+# ----------------------------
+# Step 2: Gene Mapping
+# ----------------------------
+
+# Initialize biomaRt
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Get Ensembl gene IDs
+genes <- rownames(liver_count_matrix)
+
+# Fetch mapping from Ensembl to Entrez
+converted_genes <- getBM(
+  attributes = c("ensembl_gene_id", "entrezgene_id"),
+  filters = "ensembl_gene_id",
+  values = genes,
+  mart = mart
+)
+
+# Filter out genes without Entrez IDs
+updated_genes <- converted_genes[!is.na(converted_genes$entrezgene_id), ]
+
+# Filter the count matrix to include only mapped genes
+liver_count_matrix <- liver_count_matrix[rownames(liver_count_matrix) %in% updated_genes$ensembl_gene_id, ]
+
+# Create a mapping from Ensembl to Entrez
+gene_mapping <- setNames(updated_genes$entrezgene_id, updated_genes$ensembl_gene_id)
+
+# Update row names to Entrez IDs
+rownames(liver_count_matrix) <- gene_mapping[rownames(liver_count_matrix)]
+
+# Verify the updated row names
+head(rownames(liver_count_matrix))
+
+# ----------------------------
+# Step 3: Calculate Gene Means and Select Highly Expressed Genes
+# ----------------------------
+
+# Calculate mean expression for each gene
+gene_means <- rowMeans(liver_count_matrix)
+
+# Rank genes based on mean expression
+ranked_genes <- names(sort(gene_means, decreasing = TRUE))
+
+
+hepatocyte_pathways = c("Biosynthesis of unsaturated fatty acids", "Carbon metabolism", "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+ "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism - cytochrome P450",
+    "Thyroid cancer",
+    "Shigellosis", 
+    "Colorectal cancer",
+    "Pancreatic cancer",
+    "Hepatocellular carcinoma",
+    "Gastric cancer",
+    "Glioma",
+    "Acute myeloid leukemia",
+    "Chronic myeloid leukemia",
+    "Basal cell carcinoma",
+    "Melanoma",
+    "Renal cell carcinoma",
+    "Bladder cancer",
+    "Prostate cancer",
+    "Endometrial cancer",
+    "Breast cancer",
+    "Small cell lung cancer",
+    "Non-small cell lung cancer")
+
+
+gene_means <- rowMeans(liver_count_matrix)
+ranked_genes <- names(sort(gene_means, decreasing = TRUE))
+
+
+cutoff <- quantile(rowMeans(liver_count_matrix), 0.95)
+highly_expressed_genes <- rownames(liver_count_matrix)[rowMeans(liver_count_matrix) > cutoff]
+
+result <- enrichKEGG(gene = highly_expressed_genes,
+                    organism = 'hsa',
+                    pAdjustMethod = "BH",
+                    pvalueCutoff = 0.05,
+                    qvalueCutoff = 0.2,
+                    minGSSize = 15,
+                    maxGSSize = 500,
+                    use_internal_data = FALSE)
+enriched_pathways <- as.data.frame(result)[, c("Description", "pvalue", "qvalue")]
+enriched_in_hepatocyte <- enriched_pathways$Description %in% hepatocyte_pathways
+
+print(enriched_in_hepatocyte)
+
+
+enriched_pathways <- as.data.frame(result)[, c("Description", "pvalue", "qvalue")]
+
+# Determine which hepatocyte pathways are enriched
+enrichment_status <- hepatocyte_pathways %in% enriched_pathways$Description
+
+# Create a data frame that has pathway names and their enrichment status
+final_results <- data.frame(Pathway = hepatocyte_pathways,
+                           Enriched = ifelse(enrichment_status, "yes", "no"))
+
+# Display entire dataframe without truncation
+options(max.print = nrow(final_results))
+print(final_results)
+
+# Create the new data frame with the desired columns
+final_results_csv <- data.frame(
+  Pathway.Name = final_results$Pathway,
+  Type = "ORA",  # assign "ORA" for every pathway
+  Value = ifelse(final_results$Enriched == "yes", 1, -1),
+  stringsAsFactors = FALSE
+)
+
+# Write the new data frame to a CSV file without row names
+write.csv(final_results_csv, "/work/of21_work/hepatocyte_ORA_pathways.csv", row.names = FALSE)
+
+# Optionally, print the new data frame to the console
+print(final_results_csv)
+
+```
+
+
+AUCell Pathway Analysis
+
+```{r}
+library(biomaRt)
+library(clusterProfiler)
+library(AUCell)
+library(KEGGREST)
+library(XML)
+
+set.seed(1234)
+head(liver_data@meta.data)
+metadata = liver_data@meta.data
+
+count_matrix <- liver_data@assays[["RNA"]]@counts
+hepatocyte_cells <- metadata[metadata$cell_type == "hepatocyte", ]
+
+count_matrix = count_matrix[, rownames(hepatocyte_cells)]
+
+liver_count_matrix = count_matrix
+metadata = metadata[colnames(liver_count_matrix),]
+
+so <- CreateSeuratObject(counts = liver_count_matrix)
+so <- SCTransform(object = so, vst.flavor = "v2", verbose = FALSE)
+
+count_filtered = so@assays[["SCT"]]@counts
+
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Convert Ensembl IDs to gene symbols
+genes <- rownames(count_filtered)
+# Fetch mapping from Ensemble to Entrez
+converted_genes <- getBM(attributes = c("ensembl_gene_id", "entrezgene_id"), 
+               filters = "ensembl_gene_id", 
+               values = rownames(count_filtered), 
+               mart = mart)
+
+updated_genes <- converted_genes[which(is.na(converted_genes$entrezgene_id)==FALSE), ]
+count_filtered <- count_filtered[rownames(count_filtered) %in% updated_genes$ensembl_gene_id, ]
+name_mapping <- setNames(updated_genes$entrezgene_id, updated_genes$ensembl_gene_id)
+
+# Update the rownames of 'liver_count_matrix' using the mapping
+rownames(count_filtered) <- name_mapping[rownames(count_filtered)]
+# Add the prefix "hsa:" to each rowname
+rownames(count_filtered) <- paste("hsa:", rownames(count_filtered), sep="")
+
+# View the updated rownames in entrez id form
+head(rownames(count_filtered))
+
+# Define auc thresholds
+auc_thresholds <- seq(0.1, 0.5, by = 0.1)
+
+# Initialize an empty data frame for results with the correct number of columns
+num_percent_cols <- length(auc_thresholds)
+col_names <- c("PathwayName", "AssignedCellsRatio", 
+               paste0("PercentCells_AUC_0_", seq(1, num_percent_cols) * 10))
+results_df <- data.frame(matrix(ncol = length(col_names), nrow = 0))
+colnames(results_df) <- col_names
+
+# Initialize an empty data frame for results
+results_df <- data.frame(PathwayName = character(), 
+                         SelectedThreshold = numeric(), 
+                         stringsAsFactors = FALSE)
+
+
+# Install jsonlite if you haven't already:
+# install.packages("jsonlite")
+
+library(jsonlite)
+
+# Load the JSON file into R
+pathway_genes_dict <- fromJSON("/work/of21_work/hepatocyte_and_pancreas_pathway_genes.json")
+
+# Check the structure
+str(pathway_genes_dict)
+
+hepatocyte_pathways = c("Biosynthesis of unsaturated fatty acids", "Carbon metabolism", "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+   "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism",
+    "Thyroid cancer",
+    "Shigellosis", 
+    "Colorectal cancer",
+    "Pancreatic cancer",
+    "Hepatocellular carcinoma",
+    "Gastric cancer",
+    "Glioma",
+    "Acute myeloid leukemia",
+    "Chronic myeloid leukemia",
+    "Basal cell carcinoma",
+    "Melanoma",
+    "Renal cell carcinoma",
+    "Bladder cancer",
+    "Prostate cancer",
+    "Endometrial cancer",
+    "Breast cancer",
+    "Small cell lung cancer",
+    "Non-small cell lung cancer")
+
+
+results_df <- data.frame()
+
+# Determine the number of percentage columns (this should equal length(auc_thresholds))
+num_percent_cols <- length(auc_thresholds)
+
+# Loop over each pathway in the dictionary.
+# The names (i.e. keys) of pathway_genes_dict are the pathway names.
+for (pathway_name in names(pathway_genes_dict)) {
+  
+  gene_set <- pathway_genes_dict[[pathway_name]]
+  
+  # AUCell_run expects gene sets to be provided as a list.
+  # Create a list with the gene set, naming the element as the pathway name.
+  geneSetList <- list(gene_set)
+  names(geneSetList) <- pathway_name
+  
+  # Wrap the following in tryCatch to catch errors for a particular pathway.
+  tryCatch({
+    # Build cell rankings from your filtered count matrix.
+    cells_rankings <- AUCell_buildRankings(count_filtered, plotStats = FALSE)
+    
+    # Run AUCell using the gene set list.
+    # (Note: adjust aucMaxRank as needed; here it’s set to 5% of the number of rows.)
+    cells_AUC <- AUCell_run(count_filtered, geneSetList, 
+                            aucMaxRank = nrow(cells_rankings) * 0.05)
+    
+    # Set a seed and assign cells based on the AUC thresholds.
+    set.seed(123)
+    cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist = TRUE, 
+                                                 nCores = 1, assign = TRUE)
+    
+    # Extract the numeric AUC scores.
+    # (This extraction may need adjustment depending on your version of AUCell.)
+    cells_AUC_numeric <- cells_AUC@assays@data@listData[["AUC"]]
+    
+    # For each threshold in auc_thresholds, compute the percentage of cells with AUC above that threshold.
+    percent_cells_above_threshold <- sapply(auc_thresholds, function(threshold) {
+      mean(cells_AUC_numeric > threshold)
+    })
+    
+    # Calculate the ratio of assigned cells.
+    # (Assuming cells_assignment$geneSet$assignment gives a vector of cell assignments.)
+    assigned_cells <- cells_assignment[[ pathway_name ]]$assignment
+    assigned_cells_ratio <- length(assigned_cells) / ncol(count_filtered)
+    
+    # Create a one-row data frame to store the results.
+    results_row_df <- data.frame(matrix(nrow = 1, ncol = length(col_names)))
+    colnames(results_row_df) <- col_names
+    results_row_df$PathwayName <- pathway_name
+    # Here we store the pathway name in place of the HSA ID, as our gene set came from the dictionary.
+    results_row_df$AssignedCellsRatio <- assigned_cells_ratio
+    # Fill in the percentage columns.
+    results_row_df[1, 4:(3 + num_percent_cols)] <- percent_cells_above_threshold
+    
+    # Append this row to our overall results data frame.
+    results_df <- rbind(results_df, results_row_df)
+    
+  }, error = function(e) {
+    # In case of error, print a message and continue.
+    cat("Error processing pathway", pathway_name, ":", e$message, "\n")
+  })
+}
+
+# (Optional) Rename the percentage columns if not already set.
+percent_col_names <- paste0("PercentCells_AUC_0_", seq(1, num_percent_cols) * 10)
+colnames(results_df)[4:(3 + num_percent_cols)] <- percent_col_names
+
+
+# Filtering for pathways of interest
+filtered_df <- results_df[results_df$PathwayName %in% hepatocyte_pathways, ]
+
+print(filtered_df)
+
+# Create the new data frame with the desired columns
+final_results_csv <- data.frame(
+  Pathway.Name = filtered_df$Pathway,
+  Type = "AUCell",  # assign "ORA" for every pathway
+  Value = ifelse(filtered_df$AssignedCellsRatio >= 0.20, 1, -1),
+  stringsAsFactors = FALSE
+)
+
+# Write the new data frame to a CSV file without row names
+write.csv(final_results_csv, "/work/of21_work/hepatocyte_AUCell_pathways.csv", row.names = FALSE)
+
+
+```
+
+
+
+scGSEA Pathway Analysis
+```{r}
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+require(gficf)
+library(biomaRt)
+library(jsonlite)
+require(msigdb)
+library(Matrix)
+
+
+
+set.seed(1234)
+liver_data = readRDS("/work/of21_work/human liver hepatocyte cells.rds")
+
+metadata <- liver_data@meta.data
+
+# Filter for hepatocyte cells
+hepatocyte_cells <- metadata[metadata$cell_type == "hepatocyte", ]
+
+# Extract the count matrix for hepatocyte cells
+count_matrix <- liver_data@assays[["RNA"]]@counts
+liver_count_matrix <- count_matrix[, rownames(hepatocyte_cells)]
+
+# Create a new Seurat object
+so <- CreateSeuratObject(counts = liver_count_matrix)
+
+# Run SCTransform
+so <- SCTransform(object = so, vst.flavor = "v2", verbose = FALSE)
+
+# Get the filtered count matrix
+liver_count_matrix <- so@assays[["SCT"]]@counts
+count_filtered = liver_count_matrix
+# ----------------------------
+# Step 2: Gene Mapping
+# ----------------------------
+
+# Select the appropriate database and dataset
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Convert Ensembl IDs to gene symbols
+genes <- rownames(count_filtered)
+# Fetch mapping from Ensemble to Entrez
+converted_genes <- getBM(attributes = c("ensembl_gene_id", "entrezgene_id"), 
+               filters = "ensembl_gene_id", 
+               values = rownames(count_filtered), 
+               mart = mart)
+
+
+
+# If you don't have it installed
+# BiocManager::install("org.Hs.eg.db")
+
+updated_genes <- converted_genes[which(is.na(converted_genes$entrezgene_id)==FALSE), ]
+# Filter rows of liver_count_matrix
+count_filtered <- count_filtered[rownames(count_filtered) %in% updated_genes$ensembl_gene_id, ]
+
+# Create a named vector from 'updated_genes' where the names are 'ensembl_gene_id' and the values are 'external_gene_name'
+name_mapping <- setNames(updated_genes$entrezgene_id, updated_genes$ensembl_gene_id)
+
+# Update the rownames of 'liver_count_matrix' using the mapping
+rownames(count_filtered) <- name_mapping[rownames(count_filtered)]
+# Add the prefix "hsa:" to each rowname
+rownames(count_filtered) <- paste("hsa:", rownames(count_filtered), sep="")
+
+# View the updated rownames to confirm changes
+head(rownames(count_filtered))
+
+data <- gficf( M = count_filtered)
+
+# Load the JSON file and force the conversion to a list
+pathway_genes_list <- fromJSON("/work/of21_work/hepatocyte_and_pancreas_pathway_genes.json", simplifyVector = FALSE)
+
+pathway_genes_list <- fromJSON("/work/of21_work/pathway_genes_master_list.json", simplifyVector = FALSE)
+# Check that it's a list
+str(pathway_genes_list)
+
+hepatocyte_pathways = c("Biosynthesis of unsaturated fatty acids", "Carbon metabolism", "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+   "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism",
+    "Thyroid cancer",
+    "Shigellosis", 
+    "Colorectal cancer",
+    "Pancreatic cancer",
+    "Hepatocellular carcinoma",
+    "Gastric cancer",
+    "Glioma",
+    "Acute myeloid leukemia",
+    "Chronic myeloid leukemia",
+    "Basal cell carcinoma",
+    "Melanoma",
+    "Renal cell carcinoma",
+    "Bladder cancer",
+    "Prostate cancer",
+    "Endometrial cancer",
+    "Breast cancer",
+    "Small cell lung cancer",
+    "Non-small cell lung cancer")
+# Filter the list to only include entries with names in hepatocyte_pathways
+filtered_pathway_genes_list <- pathway_genes_list[names(pathway_genes_list) %in% hepatocyte_pathways]
+
+
+data = gficf::runScGSEA(data = data,
+                 geneID = "ensamble",                    
+                 species = "human",                    
+                 category = "H",   
+                 pathway.list = filtered_pathway_genes_list,
+                 nmf.k = 100,
+                 fdr.th = .1,
+                 rescale = "none",
+                 verbose = T)
+
+
+
+#writeMM(data[["scgsea"]][["x"]], "/work/of21_work/hepatocyte_scgsea_april_30.mtx")
+
+scgsea_data = data[["scgsea"]][["x"]]
+
+# Assuming you have a matrix data[["scgsea"]][["x"]]
+# First, calculate the column averages
+# Assuming data[["scgsea"]][["x"]] is your dataframe
+
+# Calculate the median of each column
+column_medians <- apply(data[["scgsea"]][["x"]], 2, median)
+
+
+# Then, create a single-row dataframe with these averages
+# The column names of the new dataframe will be the same as those from data[["scgsea"]][["x"]]
+medians_df <- as.data.frame(t(column_medians))
+
+metabolic_pathways = c("Biosynthesis of unsaturated fatty acids", "Carbon metabolism", "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+   "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism")
+
+cancer_pathways = c("Thyroid cancer",
+    "Shigellosis", 
+    "Colorectal cancer",
+    "Pancreatic cancer",
+    "Hepatocellular carcinoma",
+    "Gastric cancer",
+    "Glioma",
+    "Acute myeloid leukemia",
+    "Chronic myeloid leukemia",
+    "Basal cell carcinoma",
+    "Melanoma",
+    "Renal cell carcinoma",
+    "Bladder cancer",
+    "Prostate cancer",
+    "Endometrial cancer",
+    "Breast cancer",
+    "Small cell lung cancer",
+    "Non-small cell lung cancer")
+
+
+
+
+
+
+
+#######
+
+# Identify pathways in hepatocyte_pathways that are not in medians_df
+missing_pathways <- setdiff(hepatocyte_pathways, colnames(medians_df))
+
+# Add a new column for each missing pathway with a value of 0
+for (pathway in missing_pathways) {
+  medians_df[[pathway]] <- 0
+}
+
+# (Optional) Reorder the columns so that they follow the order of hepatocyte_pathways.
+# This is helpful if you want a consistent column order.
+medians_df <- medians_df[, hepatocyte_pathways, drop = FALSE]
+
+# View the updated medians_df
+head(medians_df)
+
+
+
+# Define your ground truth labels:
+# For each pathway (i.e. each column in medians_df), label as 1 (active) if in metabolic_pathways,
+# and 0 (inactive) if in cancer_pathways.
+ground_truth <- sapply(colnames(medians_df), function(pathway) {
+  if (pathway %in% metabolic_pathways) {
+    return(1)
+  } else if (pathway %in% cancer_pathways) {
+    return(0)
+  } else {
+    stop(paste("Pathway", pathway, "is neither metabolic nor cancer!"))
+  }
+})
+
+# Convert ground_truth to a numeric vector (named by pathway names)
+ground_truth <- as.numeric(ground_truth)
+names(ground_truth) <- colnames(medians_df)
+
+# Create a sequence of thresholds to test.
+# Here we use 100 values from 0 to the maximum score in medians_df.
+# Note: as medians_df is a one-row data frame, we coerce its values to numeric.
+score_values <- as.numeric(medians_df[1, ])
+thresholds <- seq(0, max(score_values), length.out = 100)
+
+# Initialize a vector to hold F1 scores for each threshold.
+f1_scores <- numeric(length(thresholds))
+
+# Iterate over each threshold and calculate F1 score.
+for(i in seq_along(thresholds)) {
+  thresh <- thresholds[i]
+  # For each pathway, predict active (1) if its score >= threshold, else inactive (0)
+  predictions <- ifelse(score_values >= thresh, 1, 0)
+  
+  # Compute true positives, false positives, and false negatives:
+  TP <- sum(predictions == 1 & ground_truth == 1)
+  FP <- sum(predictions == 1 & ground_truth == 0)
+  FN <- sum(predictions == 0 & ground_truth == 1)
+  
+  # Compute precision and recall (handle division by zero).
+  if (TP + FP == 0) {
+    precision <- 0
+  } else {
+    precision <- TP / (TP + FP)
+  }
+  
+  if (TP + FN == 0) {
+    recall <- 0
+  } else {
+    recall <- TP / (TP + FN)
+  }
+  
+  # Compute the F1 score (if both precision and recall are nonzero).
+  if (precision + recall == 0) {
+    f1 <- 0
+  } else {
+    f1 <- 2 * precision * recall / (precision + recall)
+  }
+  
+  f1_scores[i] <- f1
+}
+
+# Find the threshold that gives the maximum F1 score.
+best_index <- which.max(f1_scores)
+best_threshold <- thresholds[best_index]
+best_f1 <- f1_scores[best_index]
+
+cat("Best threshold:", best_threshold, "\n")
+cat("Best F1 score:", best_f1, "\n")
+
+# Assuming best_threshold has already been computed from the previous optimization step
+
+# Create a new dataframe where each value in medians_df is replaced with 1 if >= best_threshold, otherwise -1
+thresholded_df <- medians_df  # copy the original dataframe structure
+thresholded_df[] <- ifelse(medians_df >= best_threshold, 1, -1)
+
+# Alternatively, if you prefer to use lapply (which is useful for dataframes with multiple rows):
+# thresholded_df <- as.data.frame(lapply(medians_df, function(x) ifelse(x >= best_threshold, 1, -1)))
+
+# View the thresholded dataframe
+print(thresholded_df)
+
+
+# Create the final data frame using hepatocyte_pathways:
+final_medians <- data.frame(
+  Pathway.Name = hepatocyte_pathways,
+  Type = "scGSEA",  # all rows get "scGSEA"
+  stringsAsFactors = FALSE
+)
+
+final_medians_vector <- unlist(thresholded_df)
+
+
+# For each pathway, if it is present in medians_vector, extract the value; otherwise, assign 0.
+final_medians$Value <- sapply(final_medians$Pathway.Name, function(pw) {
+  if (pw %in% names(final_medians_vector)) {
+    final_medians_vector[pw]
+  } else {
+    0
+  }
+})
+
+write.csv(final_medians, "/work/of21_work/hepatocyte_scGSEA_pathways.csv", row.names = FALSE)
+
+
+
+```
