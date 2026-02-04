@@ -1,0 +1,12 @@
+jupyterlab
+notebook
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+scikit-learn
+
+# Install xGATE Python package from GitHub
+# (pip supports git+https URLs)
+git+https://github.com/jichunxie/xGATE.git
