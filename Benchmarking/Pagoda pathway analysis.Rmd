@@ -1,0 +1,298 @@
+---
+title: "Pagoda pathway analysis"
+output: html_document
+date: "2026-02-10"
+---
+
+Liver dataset
+```{r}
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+set.seed(1234)
+
+liver_data = readRDS("C:/Dev/Code/xGATE/Paper_code/human liver hepatocyte cells.rds")
+head(liver_data@meta.data)
+metadata = liver_data@meta.data
+
+hepatocyte_cells = metadata[metadata$cell_type == "hepatocyte",]
+
+count_matrix <- liver_data@assays[["RNA"]]@counts
+
+liver_count_matrix = count_matrix[, rownames(hepatocyte_cells)]
+
+
+```
+
+
+
+Pagoda on hepatocytes
+```{r}
+library(pagoda2)
+library(jsonlite)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(Matrix)
+library(Seurat)
+
+
+
+# Define the specific pathways you want to test
+target_pathways <- c(
+  "Carbon metabolism", "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+  "Biosynthesis of unsaturated fatty acids", "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism", "Thyroid cancer",
+  "Shigellosis", "Colorectal cancer", "Pancreatic cancer", "Hepatocellular carcinoma",
+  "Gastric cancer", "Glioma", "Acute myeloid leukemia", "Chronic myeloid leukemia",
+  "Basal cell carcinoma", "Melanoma", "Renal cell carcinoma", "Bladder cancer",
+  "Prostate cancer", "Endometrial cancer", "Breast cancer",
+  "Small cell lung cancer", "Non-small cell lung cancer"
+)
+
+# --- 3. Prepare the Pathway Environment ---
+
+# Load the Master JSON file
+json_data <- fromJSON("C:/Dev/Code/xGATE/Paper_code/R_code/pathway_genes_master_list.json")
+
+# Filter JSON to keep only the requested pathways
+valid_targets <- intersect(names(json_data), target_pathways)
+filtered_list <- json_data[valid_targets]
+print(paste("Processing", length(valid_targets), "pathways..."))
+
+# Helper Function: Convert IDs and Clean Attributes
+clean_and_convert <- function(kegg_ids) {
+  # 1. Remove "hsa:" prefix
+  entrez_ids <- gsub("hsa:", "", kegg_ids)
+  
+  # 2. Map Entrez to Ensembl
+  ensembl_ids <- mapIds(org.Hs.eg.db, 
+                        keys = entrez_ids, 
+                        column = "ENSEMBL", 
+                        keytype = "ENTREZID", 
+                        multiVals = "first")
+  
+  # 3. Remove NAs
+  clean_ids <- na.omit(ensembl_ids)
+  
+  # 4. CRITICAL: Strip all attributes (names, na.action) to prevent 'non-function' error
+  clean_ids <- as.vector(clean_ids)
+  clean_ids <- unname(clean_ids)
+  attributes(clean_ids) <- NULL 
+  
+  return(clean_ids)
+}
+
+# Apply conversion and cleaning
+final_list <- lapply(filtered_list, clean_and_convert)
+
+# Remove any empty pathways
+final_list <- final_list[sapply(final_list, length) > 0]
+
+# Convert to R Environment (Required for 'testPathwayOverdispersion')
+pathway_env <- list2env(final_list)
+
+
+# --- 4. Initialize PAGODA2 Object ---
+
+# Ensure matrix is strictly a sparse matrix (dgCMatrix) to avoid Type errors
+# Also check for versioned IDs in the matrix (e.g. ENSG...1) and strip them if needed
+clean_counts <- as(as.matrix(liver_count_matrix), "dgCMatrix")
+if(any(grepl("\\.[0-9]+$", rownames(clean_counts)))) {
+  rownames(clean_counts) <- sub("\\.[0-9]+$", "", rownames(clean_counts))
+}
+
+set.seed(1234)
+# Create PAGODA2 object 
+p2 <- Pagoda2$new(clean_counts, log.scale=TRUE, n.cores=1)
+
+# Run Preprocessing
+p2$adjustVariance(plot=FALSE, gam.k=10)
+p2$calculatePcaReduction(nPcs=50, n.odgenes=3000)
+
+
+# --- 5. Run Pathway Analysis ---
+set.seed(1234)
+
+# Use 'testPathwayOverdispersion' (Robust method for Environments)
+# min.pathway.size = 5 filters out pathways with too few matching genes
+p2$testPathwayOverdispersion(setenv = pathway_env, verbose = TRUE, 
+                             recalculate.pca = FALSE, min.pathway.size = 5)
+
+
+# --- 6. Extract Results (Significance & Activity) ---
+
+# A. Get Significance Table (Z-scores)
+sig_results <- data.frame(Pathway = names(final_list), Z_Score = NA, NumGenes = NA)
+
+for(pw in names(final_list)) {
+  if(!is.null(p2$misc$pwpca[[pw]])) {
+    res <- p2$misc$pwpca[[pw]]
+    # Use Z-score if available, otherwise raw variance
+    sig_results$Z_Score[sig_results$Pathway == pw] <- if(!is.null(res$z)) res$z else res$zv
+    sig_results$NumGenes[sig_results$Pathway == pw] <- length(res$xp$rotation[,1])
+  }
+}
+# Sort by significance
+sig_results <- sig_results[order(sig_results$Z_Score, decreasing = TRUE), ]
+print("Top Significant Pathways:")
+print(head(sig_results, 10))
+
+
+
+```
+
+Load Pancreas dataset
+```{r}
+library(pagoda2)
+library(jsonlite)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(Matrix)
+library(Seurat)
+library(dplyr)
+
+# Define target pathways
+target_pathways <- c(
+  "Autophagy",
+    "Protein processing in endoplasmic reticulum",
+    "mTOR signaling pathway",
+    "MAPK signaling pathway",
+    "Apoptosis",
+    "Longevity regulating pathway",
+    "HIF-1 signaling pathway",
+    "AMPK signaling pathway",
+    "Phagosome",
+    "PPAR signaling pathway",
+    "FoxO signaling pathway",
+    "cGMP-PKG signaling pathway",
+    "Cytokine-cytokine receptor interaction",
+    "Mineral absorption",
+    "Antigen processing and presentation",
+    "Rap1 signaling pathway",
+    "Ribosome",
+    "Protein digestion and absorption",
+    "PI3K-Akt signaling pathway",
+    "Insulin signaling pathway",
+    "Oxidative phosphorylation",
+    "Pancreatic secretion",
+    "Salmonella infection",
+    "Bacterial invasion of epithelial cells",
+    "Pathogenic Escherichia coli infection",
+    "Thyroid cancer",
+    "Shigellosis"
+)
+
+# Load and Clean JSON Pathways
+json_data <- fromJSON("C:/Dev/Code/xGATE/Paper_code/R_code/pathway_genes_master_list.json")
+filtered_list <- json_data[intersect(names(json_data), target_pathways)]
+
+# Helper to clean IDs
+clean_and_convert <- function(kegg_ids) {
+  entrez_ids <- gsub("hsa:", "", kegg_ids)
+  ensembl_ids <- mapIds(org.Hs.eg.db, keys = entrez_ids, column = "ENSEMBL", keytype = "ENTREZID", multiVals = "first")
+  clean_ids <- na.omit(ensembl_ids)
+  clean_ids <- as.vector(clean_ids) # Strip attributes
+  clean_ids <- unname(clean_ids)
+  attributes(clean_ids) <- NULL 
+  return(clean_ids)
+}
+
+final_list <- lapply(filtered_list, clean_and_convert)
+final_list <- final_list[sapply(final_list, length) > 0]
+pathway_env <- list2env(final_list) # Ready for PAGODA
+
+
+# --- 2. CONTROL GROUP ANALYSIS ---
+
+# Load Data
+pancreas_data <- readRDS("C:/Dev/Code/xGATE/Paper_code/pancreas_human.rds")
+metadata <- pancreas_data@meta.data
+
+# Subset Control Beta Cells
+cells_ctrl <- rownames(metadata[metadata$cell_type == "type B pancreatic cell" & 
+                                metadata$disease_state == "Control",])
+count_matrix_ctrl <- pancreas_data@assays[["RNA"]]@counts[, cells_ctrl]
+
+# Prepare Matrix
+clean_counts_ctrl <- as(as.matrix(count_matrix_ctrl), "dgCMatrix")
+if(any(grepl("\\.[0-9]+$", rownames(clean_counts_ctrl)))) {
+  rownames(clean_counts_ctrl) <- sub("\\.[0-9]+$", "", rownames(clean_counts_ctrl))
+}
+
+# Run PAGODA (Control)
+set.seed(1234) # Reproducibility for PCA
+p2_ctrl <- Pagoda2$new(clean_counts_ctrl, log.scale=TRUE, n.cores=1)
+p2_ctrl$adjustVariance(plot=FALSE, gam.k=10)
+p2_ctrl$calculatePcaReduction(nPcs=50, n.odgenes=3000)
+
+set.seed(1234) # Reproducibility for Z-scores
+p2_ctrl$testPathwayOverdispersion(setenv = pathway_env, verbose = TRUE, 
+                                  recalculate.pca = FALSE, min.pathway.size = 5)
+
+# Extract Results
+results_ctrl <- data.frame(Pathway = names(final_list), Z_Score = NA)
+for(pw in names(final_list)) {
+  if(!is.null(p2_ctrl$misc$pwpca[[pw]])) {
+    res <- p2_ctrl$misc$pwpca[[pw]]
+    results_ctrl$Z_Score[results_ctrl$Pathway == pw] <- if(!is.null(res$z)) res$z else res$zv
+  }
+}
+results_ctrl <- results_ctrl[order(results_ctrl$Z_Score, decreasing = TRUE), ]
+
+print("Top Significant Pathways (Control Beta Cells):")
+print(head(results_ctrl, 10))
+
+
+```
+
+T1d Group Results
+```{r}
+# --- 3. T1D GROUP ANALYSIS ---
+
+# Subset T1D Beta Cells
+# Note: Using 'disease' column per your snippet
+cells_t1d <- rownames(metadata[metadata$cell_type == "type B pancreatic cell" & 
+                               metadata$disease == "type 1 diabetes mellitus",])
+count_matrix_t1d <- pancreas_data@assays[["RNA"]]@counts[, cells_t1d]
+
+# Prepare Matrix
+clean_counts_t1d <- as(as.matrix(count_matrix_t1d), "dgCMatrix")
+if(any(grepl("\\.[0-9]+$", rownames(clean_counts_t1d)))) {
+  rownames(clean_counts_t1d) <- sub("\\.[0-9]+$", "", rownames(clean_counts_t1d))
+}
+
+# Run PAGODA (T1D)
+set.seed(1234) # Same seed as Control for fair comparison
+p2_t1d <- Pagoda2$new(clean_counts_t1d, log.scale=TRUE, n.cores=1)
+p2_t1d$adjustVariance(plot=FALSE, gam.k=10)
+p2_t1d$calculatePcaReduction(nPcs=50, n.odgenes=3000)
+
+set.seed(1234) 
+p2_t1d$testPathwayOverdispersion(setenv = pathway_env, verbose = TRUE, 
+                                 recalculate.pca = FALSE, min.pathway.size = 5)
+
+# Extract Results
+results_t1d <- data.frame(Pathway = names(final_list), Z_Score = NA)
+for(pw in names(final_list)) {
+  if(!is.null(p2_t1d$misc$pwpca[[pw]])) {
+    res <- p2_t1d$misc$pwpca[[pw]]
+    results_t1d$Z_Score[results_t1d$Pathway == pw] <- if(!is.null(res$z)) res$z else res$zv
+  }
+}
+results_t1d <- results_t1d[order(results_t1d$Z_Score, decreasing = TRUE), ]
+
+print("Top Significant Pathways (T1D Beta Cells):")
+print(head(results_t1d, 10))
+
+
+
+
+```

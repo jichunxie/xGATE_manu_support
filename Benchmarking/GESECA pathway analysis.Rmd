@@ -1,0 +1,289 @@
+---
+title: "GESECA"
+output: html_document
+date: "2026-02-13"
+---
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(fgsea)
+library(Seurat)
+library(Matrix)
+
+liver_data = readRDS("C:/Dev/Code/xGATE/Paper_code/human_liver.rds")
+head(liver_data@meta.data)
+metadata = liver_data@meta.data
+
+hepatocyte_cells = metadata[metadata$cell_type == "hepatocyte",]
+
+count_matrix <- liver_data@assays[["RNA"]]@counts
+
+liver_count_matrix = count_matrix[, rownames(hepatocyte_cells)]
+
+
+# --- 1. PREPARE THE DATA ---
+
+# A. Normalize the Count Matrix
+# GESECA expects an expression matrix (usually log-normalized), not raw counts.
+# We use Seurat's standard normalization (Log1p)
+print("Normalizing count matrix...")
+# We use Seurat's internal function to normalize the sparse matrix efficiently
+norm_matrix <- NormalizeData(liver_count_matrix, verbose = FALSE)
+
+# B. Convert to Dense Matrix (Required for GESECA)
+# Note: If you have >50k cells, this might use a lot of RAM. 
+# Since we are subsetting hepatocytes, it should be fine.
+E_matrix <- as.matrix(norm_matrix)
+
+# --- 2. ID COMPATIBILITY CHECK ---
+
+library(pagoda2)
+library(jsonlite)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(Matrix)
+library(Seurat)
+
+
+
+# Define the specific pathways to test
+target_pathways <- c(
+  "Carbon metabolism", "Biosynthesis of amino acids", "Biosynthesis of cofactors",
+  "Glycolysis / Gluconeogenesis", "Pentose and glucuronate interconversions",
+  "Ascorbate and aldarate metabolism", "Pyruvate metabolism", "Fatty acid degradation",
+  "Primary bile acid biosynthesis", "Steroid hormone biosynthesis",
+  "Arachidonic acid metabolism", "Linoleic acid metabolism",
+  "Biosynthesis of unsaturated fatty acids", "Glycine, serine and threonine metabolism",
+  "Cysteine and methionine metabolism", "Tyrosine metabolism",
+  "Taurine and hypotaurine metabolism", "Retinol metabolism",
+  "Porphyrin metabolism", "Metabolism of xenobiotics by cytochrome P450",
+  "Cholesterol metabolism", "Caffeine metabolism", "Drug metabolism", "Thyroid cancer",
+  "Shigellosis", "Colorectal cancer", "Pancreatic cancer", "Hepatocellular carcinoma",
+  "Gastric cancer", "Glioma", "Acute myeloid leukemia", "Chronic myeloid leukemia",
+  "Basal cell carcinoma", "Melanoma", "Renal cell carcinoma", "Bladder cancer",
+  "Prostate cancer", "Endometrial cancer", "Breast cancer",
+  "Small cell lung cancer", "Non-small cell lung cancer"
+)
+
+# --- Prepare the Pathway Environment ---
+
+# Load the Master JSON file
+json_data <- fromJSON("C:/Dev/Code/xGATE/Paper_code/R_code/pathway_genes_master_list.json")
+
+# Filter JSON to keep only the requested pathways
+valid_targets <- intersect(names(json_data), target_pathways)
+filtered_list <- json_data[valid_targets]
+print(paste("Processing", length(valid_targets), "pathways..."))
+
+# Helper Function: Convert IDs and Clean Attributes
+clean_and_convert <- function(kegg_ids) {
+  # 1. Remove "hsa:" prefix
+  entrez_ids <- gsub("hsa:", "", kegg_ids)
+  
+  # 2. Map Entrez to Ensembl
+  ensembl_ids <- mapIds(org.Hs.eg.db, 
+                        keys = entrez_ids, 
+                        column = "ENSEMBL", 
+                        keytype = "ENTREZID", 
+                        multiVals = "first")
+  
+  # 3. Remove NAs
+  clean_ids <- na.omit(ensembl_ids)
+  
+  # 4. CRITICAL: Strip all attributes (names, na.action) to prevent 'non-function' error
+  clean_ids <- as.vector(clean_ids)
+  clean_ids <- unname(clean_ids)
+  attributes(clean_ids) <- NULL 
+  
+  return(clean_ids)
+}
+
+# Apply conversion and cleaning
+final_list <- lapply(filtered_list, clean_and_convert)
+
+# Remove any empty pathways
+final_list <- final_list[sapply(final_list, length) > 0]
+
+# 'final_list' uses Ensembl IDs (from your cleaning function).
+matrix_genes <- rownames(E_matrix)
+pathway_genes <- unique(unlist(final_list))
+
+overlap_count <- length(intersect(matrix_genes, pathway_genes))
+print(paste("Total overlapping genes between Matrix and Pathways:", overlap_count))
+
+
+# --- 3. RUN GESECA ---
+
+print("Running GESECA...")
+set.seed(42)
+
+# Run the analysis
+# minSize=5 ensures we keep smaller pathways
+geseca_results <- geseca(
+  pathways = final_list,
+  E = E_matrix,
+  minSize = 5,
+  maxSize = 2000,
+  center = TRUE # Performs centering as per the vignette
+)
+
+# --- 4. FORMAT & SAVE RESULTS ---
+
+# Convert to Dataframe
+results_df <- as.data.frame(geseca_results)
+print(results_df)
+
+# Create the Output structure
+csv_output <- data.frame(
+  Pathway.Name = results_df$pathway,
+  Type = "GESECA",
+  stringsAsFactors = FALSE
+)
+
+# Create Binary Value based on Significance
+# If Adjusted P-value < 0.05 -> 1 (Co-regulated/Active)
+# Otherwise -> -1 (Inactive)
+csv_output$Value <- ifelse(results_df$padj < 0.05, 1, -1)
+
+# Sort by P-value (most significant first)
+# We use the original results_df to sort, then apply order to csv_output
+csv_output <- csv_output[order(results_df$padj), ]
+
+# --- 5. SAVE TO CSV ---
+#write.csv(csv_output, "hepatocyte_geseca_pathways.csv", row.names = FALSE)
+
+
+
+```
+
+```{r}
+library(fgsea)
+library(Seurat)
+library(Matrix)
+library(jsonlite)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+# --- 1. SETUP PATHWAYS & DATA (Your Code) ---
+
+# Define target pathways
+target_pathways <- c(
+  "Autophagy", "Protein processing in endoplasmic reticulum", "mTOR signaling pathway",
+  "MAPK signaling pathway", "Apoptosis", "Longevity regulating pathway",
+  "HIF-1 signaling pathway", "AMPK signaling pathway", "Phagosome",
+  "PPAR signaling pathway", "FoxO signaling pathway", "cGMP-PKG signaling pathway",
+  "Cytokine-cytokine receptor interaction", "Mineral absorption",
+  "Antigen processing and presentation", "Rap1 signaling pathway", "Ribosome",
+  "Protein digestion and absorption", "PI3K-Akt signaling pathway",
+  "Insulin signaling pathway", "Oxidative phosphorylation", "Pancreatic secretion",
+  "Salmonella infection", "Bacterial invasion of epithelial cells",
+  "Pathogenic Escherichia coli infection", "Thyroid cancer", "Shigellosis"
+)
+
+# Load and Clean JSON Pathways
+json_data <- fromJSON("C:/Dev/Code/xGATE/Paper_code/R_code/pathway_genes_master_list.json")
+valid_targets <- intersect(names(json_data), target_pathways)
+filtered_list <- json_data[valid_targets]
+
+# Helper to clean IDs
+clean_and_convert <- function(kegg_ids) {
+  entrez_ids <- gsub("hsa:", "", kegg_ids)
+  ensembl_ids <- mapIds(org.Hs.eg.db, keys = entrez_ids, column = "ENSEMBL", keytype = "ENTREZID", multiVals = "first")
+  clean_ids <- na.omit(ensembl_ids)
+  clean_ids <- as.vector(clean_ids) # Strip attributes
+  clean_ids <- unname(clean_ids)
+  attributes(clean_ids) <- NULL 
+  return(clean_ids)
+}
+
+final_list <- lapply(filtered_list, clean_and_convert)
+final_list <- final_list[sapply(final_list, length) > 0]
+
+# Load Data
+pancreas_data <- readRDS("C:/Dev/Code/xGATE/Paper_code/pancreas_human.rds")
+metadata <- pancreas_data@meta.data
+
+# Subset Control Beta Cells
+cells_ctrl <- rownames(metadata[metadata$cell_type == "type B pancreatic cell" & 
+                                metadata$disease_state == "Control",])
+count_matrix_ctrl <- pancreas_data@assays[["RNA"]]@counts[, cells_ctrl]
+
+# Prepare Matrix
+clean_counts_ctrl <- as(as.matrix(count_matrix_ctrl), "dgCMatrix")
+
+# Strip version numbers from gene IDs if present (to match your JSON)
+if(any(grepl("\\.[0-9]+$", rownames(clean_counts_ctrl)))) {
+  rownames(clean_counts_ctrl) <- sub("\\.[0-9]+$", "", rownames(clean_counts_ctrl))
+}
+
+# --- 2. PREPARE FOR GESECA ---
+
+# A. Normalize the Count Matrix
+print("Normalizing count matrix...")
+# Log1p Normalization
+norm_matrix <- NormalizeData(clean_counts_ctrl, verbose = FALSE)
+
+# B. Convert to Dense Matrix
+# Since you have subsetted to specific cells, this should fit in memory.
+E_matrix <- as.matrix(norm_matrix)
+
+# C. Overlap Check
+matrix_genes <- rownames(E_matrix)
+pathway_genes <- unique(unlist(final_list))
+overlap_count <- length(intersect(matrix_genes, pathway_genes))
+print(paste("Total overlapping genes:", overlap_count))
+
+if(overlap_count < 5) {
+  stop("ERROR: Low gene overlap. Check if your Pancreas RDS uses Ensembl IDs or Symbols.")
+}
+
+# --- 3. RUN GESECA ---
+
+print("Running GESECA...")
+set.seed(42)
+
+# Run Analysis
+geseca_results <- geseca(
+  pathways = final_list,
+  E = E_matrix,
+  minSize = 5,
+  maxSize = 2000,
+  center = TRUE
+)
+
+# --- 4. FORMAT & SAVE ---
+
+results_df <- as.data.frame(geseca_results)
+print(results_df)
+
+# Create Output Structure (Matching your Pagoda File)
+csv_output <- data.frame(
+  Pathway.Name = results_df$pathway,
+  Type = "GESECA",
+  Group = "Ctrl",  # Added Group column
+  stringsAsFactors = FALSE
+)
+
+# Create Binary Value
+# Logic: Adjusted P-value < 0.05 = Active (1), else -1
+csv_output$Value <- ifelse(results_df$padj < 0.05, 1, -1)
+
+# Sort by Significance (P-value)
+csv_output <- csv_output[order(results_df$padj), ]
+
+# Save to CSV
+#write.csv(csv_output, "pancreas_geseca_pathways_ctrl.csv", row.names = FALSE)
+
+
+
+
+
+```
+
+```{r}
+sessionInfo()
+
+```
