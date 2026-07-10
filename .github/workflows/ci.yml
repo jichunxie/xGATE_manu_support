@@ -1,0 +1,39 @@
+name: ci
+
+# Lightweight checks that need no large data or the xGATE conda env:
+# byte-compile all scripts, run the sanity checks, and dry-run the Makefile
+# targets so renamed script paths can't silently drift.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal deps
+        run: python -m pip install --upgrade pip pyyaml
+
+      - name: Byte-compile all analysis scripts
+        run: python -m compileall -q analysis tests
+
+      - name: Sanity checks
+        run: python tests/test_sanity.py
+
+      - name: Makefile targets reference existing scripts (dry run)
+        run: |
+          for t in benchmark fig3 fdr nulls complexity partial extra batch; do
+            echo "== make -n $t =="
+            make -n "$t" | grep -oE 'analysis/[^ ]+\.py' | while read -r p; do
+              test -f "$p" || { echo "MISSING: $p"; exit 1; }
+            done
+          done
