@@ -1,0 +1,29 @@
+# Example path configuration for the xGATE manuscript-support code.
+#
+# Copy this file to `configs/paths.yaml` (git-ignored) and edit the values for
+# your machine. Scripts and notebooks in this repository refer to inputs under a
+# single data root; set it here once instead of editing every script.
+#
+#   cp configs/paths.example.yaml configs/paths.yaml
+#
+# NOTE: the analysis scripts under analysis/ and the biology notebooks under
+# analysis/ (figure2_pancreas, liver, figure3_senescence, figure4_5_spatial_crc_prostate)
+# reference a placeholder absolute root "/path/to/xGATE". Point that at this
+# repository, or substitute your own paths.
+
+# Repository root (where you cloned this repo).
+repo_root: /path/to/xGATE
+
+# Data root holding the input files described in data/README.md.
+# The biology notebooks expect their inputs directly under this directory.
+data_root: /path/to/xGATE/data
+
+# Where regenerated intermediates and metric CSVs are written.
+results_root: /path/to/xGATE/results
+
+# Where figure panels (PDF/PNG) are written.
+figures_root: /path/to/xGATE/figures
+
+# Optional Python environment prefix for analysis/shared/xgate_py.sh.
+# Public users can instead activate their own environment before running scripts.
+xgate_conda_prefix: /path/to/your/python/environment

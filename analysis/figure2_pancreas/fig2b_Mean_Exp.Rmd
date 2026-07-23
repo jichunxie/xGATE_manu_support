@@ -1,0 +1,213 @@
+
+---
+title: "Boxplots marginal gene exp for pancreas"
+output: html_document
+date: "2025-05-22"
+---
+
+
+
+```{r}
+# ─────────────────────────────────────────────────────────────────────────────
+# 0) Load libraries & set seed
+# ─────────────────────────────────────────────────────────────────────────────
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(KEGGREST)
+library(org.Hs.eg.db)
+set.seed(1234)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) Load & preprocess your pancreas data
+# ─────────────────────────────────────────────────────────────────────────────
+pancreas_data      <- readRDS("data/pancreas_human.rds")
+metadata           <- pancreas_data@meta.data
+pancreas_cells_ctrl<- metadata %>%
+  filter(cell_type == "type B pancreatic cell",
+         disease_state == "Control")
+
+count_matrix <- pancreas_data@assays[["RNA"]]@counts
+count_matrix <- count_matrix[, rownames(pancreas_cells_ctrl)]
+
+seurat_obj      <- CreateSeuratObject(
+  counts      = count_matrix,
+  min.cells   = 3,
+  min.features= 10
+)
+seurat_obj      <- SCTransform(seurat_obj, vst.flavor="v2", verbose=FALSE)
+filtered_counts <- seurat_obj@assays[["SCT"]]@counts
+# ─────────────────────────────────────────────────────────────────────────────
+# 2) Define active vs. inactive pathway KEGG IDs
+# ─────────────────────────────────────────────────────────────────────────────
+active <- c(
+  "AMPK signaling pathway"                 = "hsa04152",
+  "Insulin signaling pathway"              = "hsa04910",
+  "FoxO signaling pathway"                 = "hsa04068"
+)
+
+inactive <- c(
+  "Apoptosis"                              = "hsa04210",
+  "Bacterial invasion of epithelial cells" = "hsa05100",
+  "Pathogenic E. coli infection"           = "hsa05130"
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3) Helper: fetch Entrez → Ensembl (with KEGGREST fallback)
+# ─────────────────────────────────────────────────────────────────────────────
+get_ensembl <- function(kegg_id) {
+  entry <- paste0("path:", kegg_id)
+  info  <- keggGet(entry)[[1]]
+  if (!is.null(info$GENE)) {
+    entrez <- info$GENE[seq(1, length(info$GENE), by = 2)] %>%
+      sub("^hsa:", "", .)
+  } else {
+    links  <- keggLink("hsa", entry)
+    entrez <- sub("^hsa:", "", as.vector(links))
+  }
+  suppressMessages(
+    mapIds(
+      org.Hs.eg.db,
+      keys      = entrez,
+      column    = "ENSEMBL",
+      keytype   = "ENTREZID",
+      multiVals = "first"
+    )
+  ) %>% 
+    na.omit() %>% 
+    unname()
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4) Build per-pathway gene lists
+# ─────────────────────────────────────────────────────────────────────────────
+pathways   <- c(active, inactive)
+genes_list <- map(pathways, get_ensembl)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5) Compute per-gene mean SCT expression & cap at 10
+# ─────────────────────────────────────────────────────────────────────────────
+gene_means <- rowMeans(filtered_counts)
+gene_means <- pmin(gene_means, 5)   # cap at 5
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6) Assemble a data.frame: one row per gene×pathway
+# ─────────────────────────────────────────────────────────────────────────────
+df_all <- imap_dfr(genes_list, function(genes, pw) {
+  tibble(
+    pathway    = pw,
+    gene       = genes,
+    expression = gene_means[genes],
+    status     = if_else(pw %in% names(active),
+                         "Active", "Inactive")
+  )
+})
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7) Plot: boxplots per pathway, colored by active/inactive
+# ─────────────────────────────────────────────────────────────────────────────
+p_box <- ggplot(df_all,
+                aes(x = factor(pathway, levels = names(pathways)),
+                    y = expression,
+                    fill = status)) +
+  geom_boxplot(width = 0.6, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 1.2, alpha = 0.6) +
+  scale_fill_manual(values = c("Active"   = "#e14b31",
+                               "Inactive" = "#009ADE")) +
+  scale_y_continuous(
+    limits = c(0, 5.01),
+    breaks = seq(0, 5, by = 1),
+    labels = c("0", "1", "2", "3", "4", expression("\u2265 "*5))
+  ) +
+  labs(
+    title = "",
+    x     = NULL,
+    y     = "Mean SCT Expression",
+    fill  = ""
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x     = element_text(angle = 45, hjust = 1, size = 14),
+    axis.text.y     = element_text(size = 12),
+    axis.title.y    = element_text(size = 16),
+    plot.title      = element_text(face = "bold", size = 18, hjust = 0.5)
+  )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8) Save main plot WITHOUT legend
+# ─────────────────────────────────────────────────────────────────────────────
+library(cowplot)   # <-- this defines get_legend()
+
+p_main <- p_box + theme(legend.position = "none")
+ggsave(
+  filename = "figures/fig2b_pancreas_main_boxplot.jpg",
+  plot     = p_main,
+  width    = 16,
+  height   = 6,
+  units    = "in",
+  dpi      = 600
+)
+
+plot(p_main)
+# ─────────────────────────────────────────────────────────────────────────────
+# 9) Extract & save horizontal (bottom) legend as its own figure
+# ─────────────────────────────────────────────────────────────────────────────
+library(cowplot)
+
+# extract your legend grob
+legend_horiz <- get_legend(
+  p_box +
+    theme(
+      legend.position  = "bottom",
+      legend.direction = "horizontal",
+      legend.key.size  = unit(1.5, "lines"),
+      legend.text      = element_text(size = 14),
+      legend.title     = element_text(size = 16)
+    ) +
+    guides(fill = guide_legend(
+      keywidth     = unit(5, "lines"),
+      keyheight    = unit(4, "lines"),
+      override.aes = list(colour = "black", size = 2)
+    ))
+)
+
+# save it directly
+cowplot::save_plot(
+  "figures/fig2b_pancreas_legend_horizontal.jpg",
+  legend_horiz,
+  base_width  = 8,
+  base_height = 2,
+  dpi         = 600
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10) Extract & save vertical (stacked) legend as its own figure
+# ─────────────────────────────────────────────────────────────────────────────
+legend_vert <- get_legend(
+  p_box +
+    theme(
+      legend.position  = "right",
+      legend.direction = "vertical",
+      legend.key.size  = unit(1.5, "lines"),
+      legend.text      = element_text(size = 14),
+      legend.title     = element_text(size = 16)
+    ) +
+    guides(fill = guide_legend(
+      ncol         = 1,
+      keywidth     = unit(5, "lines"),
+      keyheight    = unit(4, "lines"),
+      override.aes = list(colour = "black", size = 2)
+    ))
+)
+
+cowplot::save_plot(
+  "figures/fig2b_pancreas_legend_vertical.jpg",
+  legend_vert,
+  base_width  = 3,
+  base_height = 4,
+  dpi         = 600
+)
+
+```
+
+

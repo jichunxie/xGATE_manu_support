@@ -1,0 +1,16 @@
+CRC Visium HD preprocessing (raw 10x -> sc_input_crc.RDS / countList_spatial_crc.RDS)
+======================================================================================
+
+The bin-to-cell step that turns the raw 10x Visium HD CRC download into the
+`sc_input_crc.RDS` and `countList_spatial_crc.RDS` objects consumed by
+01_identify_spatial_domains.R follows the bin2cell tutorial:
+
+    https://github.com/Teichlab/bin2cell.git
+
+Reference single-cell dataset used by IRIS for domain deconvolution:
+Guimaraes et al. 2024, Nat. Commun. 15:5694 (via CZI CELLxGENE),
+https://doi.org/10.1038/s41467-024-49916-4  (see docs/data_availability.md).
+
+Downstream xGATE pathway activity per subdomain
+(colon_pathway_analysis_results_xgate_subdomain.csv) is produced by
+../../run_xgate_spatial.py.

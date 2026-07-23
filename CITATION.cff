@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the xGATE manuscript."
+title: "xGATE_manu_support: manuscript code and reproducibility for xGATE"
+abstract: >-
+  Analysis code, figure/table generation, and reproducibility documentation
+  accompanying the xGATE manuscript (topology-aware pathway-activity scoring
+  from gene co-expression graphs).
+type: software
+authors:
+  - family-names: Xie
+    given-names: Yuxia
+    affiliation: "Department of Biostatistics and Bioinformatics, Duke University, USA"
+  - family-names: Ferrer
+    given-names: Orlando
+    affiliation: "Department of Mathematics, Duke University, USA"
+  - family-names: Xie
+    given-names: Jichun
+    affiliation: "Department of Biostatistics and Bioinformatics, Duke University, USA"
+    email: jichun.xie@duke.edu
+license: MIT
+repository-code: "https://github.com/jichunxie/xGATE_manu_support"
+url: "https://github.com/jichunxie/xGATE"
+version: "1.0.0"
+date-released: "2026-07-10"
+keywords:
+  - single-cell
+  - spatial-transcriptomics
+  - pathway-activity
+  - gene-co-expression
+  - graph-topology
+preferred-citation:
+  type: article
+  title: "Using gene co-expression graph topological fingerprints to enhance pathway activity scoring"
+  authors:
+    - family-names: Xie
+      given-names: Yuxia
+    - family-names: Ferrer
+      given-names: Orlando
+    - family-names: Xie
+      given-names: Jichun
+  year: 2026
+  notes: "Journal and DOI will be added upon publication."

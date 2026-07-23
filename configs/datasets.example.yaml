@@ -1,0 +1,67 @@
+# Example dataset configuration for the xGATE manuscript-support code.
+#
+# Copy to `configs/datasets.yaml` (git-ignored) and fill in the local file names
+# once you have downloaded the public datasets (see data/README.md and
+# docs/data_availability.md). All accessions below are public.
+
+datasets:
+
+  liver:
+    description: Healthy human liver hepatocytes (benchmark + Fig 3, liver panels).
+    accession: GSM6058681            # GEO
+    counts: hepatocyte_human.rds
+    genesets: liver_genesets_ensembl.json
+
+  pancreas:
+    description: Healthy / T1D / AAb+ pancreatic beta-cells (Fig 2, Fig 3 pancreas panels).
+    accession: GSE148073             # GEO
+    counts: pancreas_human.rds
+    exported_expression:
+      ctrl: pancreas_ctrl_final.csv
+      t1d: pancreas_t1d_final.csv
+    adjacency:
+      ctrl: adj_matrix_pancreas_ctrl_final.csv
+      t1d:  adj_matrix_pancreas_t1d_final.csv
+      aab1: adj_matrix_pancreas_aab_cluster1_final.csv
+      aab2: adj_matrix_pancreas_aab_cluster2_final.csv
+    genesets: pancreas_genesets_ensembl.json
+    pathway_gene_master: pathway_genes_master_list.json
+
+  fucci_u2os:
+    description: FUCCI cell-cycle U2OS cells (benchmark, Fig 3; Supp_fucci_benchmark).
+    accession: GSE146773
+    assay: SMART-seq2 full-length; log-normalized (CP10K + log1p)
+
+  ts_fibroblast:
+    description: Tabula Sapiens fibroblasts (benchmark, Fig 3; batch/donor analyses).
+    accession: "https://tabula-sapiens.sf.czbiohub.org"   # Tabula Sapiens consortium
+    assay: UMI; SCTransform v2
+    donor_subset_for_batch: TSP1, TSP2, TSP4, TSP6, TSP7, TSP10, TSP14
+
+  senescence_eto:
+    description: ETO-induced senescence time-course (Fig 3e; Supp_senescence).
+    accession: GSE226225             # GEO
+
+  crc_spatial:
+    description: Colorectal cancer Visium HD spatial sample (Figure 4).
+    accession: "https://www.10xgenomics.com/datasets/visium-hd-cytassist-gene-expression-libraries-of-human-crc"
+    # Visium HD bin-to-cell preprocessing follows the bin2cell tutorial linked in
+    # analysis/figure4_5_spatial_crc_prostate/analysis/crc/scripts/Python_crc.txt
+    scrna_reference:                 # IRIS domain deconvolution reference (not the spatial data)
+      description: CRC single-cell reference for IRIS (Guimaraes et al. 2024, CELLxGENE)
+      accession: "https://doi.org/10.1038/s41467-024-49916-4"
+
+  prostate_spatial:
+    description: Prostate adenocarcinoma Xenium Prime spatial sample (Figure 5).
+    accession: "https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-prostate"
+    scrna_reference:                 # SingleR annotation + IRIS reference (not the spatial data)
+      description: Prostate Cell Atlas (Tuong et al. 2021, Cell Reports)
+      accession: "https://doi.org/10.1016/j.celrep.2021.110132"
+
+  hallmark_genesets:
+    description: MSigDB Hallmark gene sets (hallmark benchmark variant).
+    accession: MSigDB Hallmark (h.all)
+
+  kegg_pathways:
+    description: KEGG (hsa) pathway gene sets.
+    accession: KEGG hsa
